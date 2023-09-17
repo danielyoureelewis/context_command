@@ -54,7 +54,8 @@ class BurpExtender
     @callbacks.addSuiteTab(self)
     # register a factory for custom context menu items.
     @callbacks.registerContextMenuFactory(self)
-    @output_file = ""
+    @output_file_name = ""
+    @output_file = nil
     # obtain our output and error streams
     stdout = java.io.PrintWriter.new callbacks.getStdout, true
     stderr = java.io.PrintWriter.new callbacks.getStderr, true
@@ -145,8 +146,8 @@ class BurpExtender
     @labels.add(label2, 'Center')
     @commands.add(@labels, 'North')
 
-    @command_input = []
-    
+    #@command_input = []
+    @number_of_commands = 0
     path = File.expand_path(File.dirname(__FILE__))
     config = File.join(path, 'context_command.json')
     #default number of slots
@@ -182,14 +183,26 @@ class BurpExtender
   end
 
   def selectFile()
+    #close our current output file
+    if @output_file != nil and (@output_file_name != '' or not @output_file.closed?) 
+      @output_file.close 
+      @output_file_name = ''
+    end
+    #let user select file
     fchooser = JFileChooser.new
     fchooser.set_dialog_title("Select where to save command output")
     success = fchooser.show_open_dialog(nil)
     if success == JFileChooser::APPROVE_OPTION
-      @output_file = Pathname.new(fchooser.get_selected_file.get_absolute_path)
-      @output_button.setText("Current output file: " + @output_file.to_s)
+      @output_file_name = Pathname.new(fchooser.get_selected_file.get_absolute_path)
+      @output_button.setText("Current output file: " + @output_file_name.to_s)
+      @output_file = File.open(@output_file_name, 'a')
     else
       nil
+    end
+    #reset if things didn't work
+    if @output_file_name == '' 
+      @output_button.setText("Select Output File")
+      @output_file = nil
     end
   end
   
@@ -237,11 +250,11 @@ class BurpExtender
     #remove command button
 
     rmbutton = JButton.new("Remove");
-    rmbutton.putClientProperty( "index", @command_input.length );
-    rmbutton.addActionListener { rmcommand(rmbutton, line, @command_input.length)  }
+    rmbutton.putClientProperty( "index", @number_of_commands);
+    rmbutton.addActionListener { rmcommand(rmbutton, line, @number_of_commands)  }
     line.add(rmbutton, 'East')
     
-    @command_input.push(line)
+    #@command_input.push(line)
 
     constraints  = java.awt.GridBagConstraints.new
     constraints.anchor     = java.awt.GridBagConstraints::FIRST_LINE_START
@@ -249,12 +262,16 @@ class BurpExtender
     constraints.weightx = 1
     constraints.weighty = 1
     constraints.gridx = 0
-    constraints.gridy = @command_input.length()
+    #constraints.gridy = @command_input.length()
+    constraints.gridy = @number_of_commands 
     constraints.insets     = java.awt.Insets.new(5,5,5,5)
-    @command_input[-1].setPreferredSize(java.awt.Dimension.new(1,1))
-    @commandsButtonsContainer.add(@command_input[-1], constraints)
+    #@command_input[-1].setPreferredSize(java.awt.Dimension.new(1,1))
+    line.setPreferredSize(java.awt.Dimension.new(1,1))
+    #@commandsButtonsContainer.add(@command_input[-1], constraints)
+    @commandsButtonsContainer.add(line, constraints)
     @commandsButtonsContainer.revalidate
     @commandsButtonsContainer.repaint
+    @number_of_commands = @number_of_commands + 1
     updateCommands
   end
 
@@ -264,8 +281,6 @@ class BurpExtender
     @commandsButtonsContainer.revalidate
     @commandsButtonsContainer.repaint
     save
-    puts @command_records
-
   end
   
   def createMenuItems(invocation)
@@ -322,8 +337,10 @@ class BurpExtender
     thread = Thread.new {
       IO.popen([command, :err=>[:child, :out]]) {|io| 
         rdr = io.read
-        current = @current_output.getText.to_s + "\n" + command + "\n"+ rdr.to_s + "\n" + $divder
+        toAppend = "\n" + command + "\n"+ rdr.to_s + "\n" + $divder 
+        current = @current_output.getText.to_s + toAppend 
         @current_output.setText(current)
+        @output_file.puts(toAppend)
       }
       #save output to a file since this isn't going to be read it should be safe in the thread
     }

@@ -1,0 +1,1 @@
+{"nmap ssh":"nmap -p 22 #Host#","ping host":"ping -c 10 #Host#","curl 80":"curl http://#Host#"}
