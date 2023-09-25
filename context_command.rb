@@ -2,9 +2,11 @@
 require 'java'
 require 'json'
 require 'pathname'
+require "shellwords"
 # Java imports
 java_import javax.swing.JTabbedPane
 java_import javax.swing.JFileChooser
+java_import javax.swing.JCheckBox
 java_import javax.swing.JPanel
 java_import javax.swing.JTextArea
 java_import javax.swing.JLabel
@@ -63,10 +65,7 @@ class BurpExtender
     addPanel(@tabs)
   end
 
-  def addPanel(tabs)
-    # Implement Subtabs
-    @command_records = {}
-
+  def initOutputTab()
     #output subtab just needs a big text area. Maybe we will implement colors for
     #commands that support that in the future
     @outputcontainer = JPanel.new
@@ -76,7 +75,7 @@ class BurpExtender
     @output = JPanel.new
     layout       = java.awt.GridBagLayout.new
     @output.setLayout(layout)
-    tabs.addTab("Output", @outputcontainer)
+    @tabs.addTab("Output", @outputcontainer)
     constraints  = java.awt.GridBagConstraints.new
     constraints.anchor     = java.awt.GridBagConstraints::FIRST_LINE_START
     constraints.fill       = java.awt.GridBagConstraints::BOTH
@@ -109,8 +108,9 @@ class BurpExtender
 
     @outputcontainer.add(@output, 'Center')
     @outputcontainer.add(@output_button, 'South')
-    
-    #BEGIN COMMANDS SUBTAB
+  end
+
+  def initCommandsTab()
     #the commands subtab
     @commands = JPanel.new
     layout       = java.awt.GridBagLayout.new
@@ -118,7 +118,7 @@ class BurpExtender
     @commandsButtonsContainer.setBackground(Color.black)
     layout       = java.awt.BorderLayout.new
     @commands.setLayout(layout)
-    tabs.addTab("Commands", @commands)
+    @tabs.addTab("Commands", @commands)
     @commandScrollPane = JScrollPane.new(@commandsButtonsContainer);
     @commandScrollPane.setVerticalScrollBarPolicy(JScrollPane::VERTICAL_SCROLLBAR_ALWAYS);
     #@commandScrollPane.setHorizontalScrollBarPolicy(JScrollPane::HORIZONTAL_SCROLLBAR_NEVER);
@@ -175,10 +175,39 @@ class BurpExtender
     end
 
     @commandsButtonsContainer.setBackground(Color.gray)
+  end 
 
-    @settings = JPanel.new
-    tabs.addTab("Settings", @settings)
+  def initSettingsTab()
+    constraints = java.awt.GridBagConstraints.new
+    constraints.anchor = java.awt.GridBagConstraints::FIRST_LINE_START
+    constraints.fill = java.awt.GridBagConstraints::HORIZONTAL
+    constraints.weightx = 1
+    constraints.weighty = 0
+    constraints.gridx = 0
+    constraints.gridy = 0 
+    constraints.insets = java.awt.Insets.new(5,5,5,5)
+
+
+    layout = java.awt.GridBagLayout.new()
+    @settings = JPanel.new(layout)
+    @tabs.addTab("Settings", @settings)
+    @executeCommands = JCheckBox.new("Execute commands (turn off for debugging)")
+    @executeCommands.setSelected(true)
+    @escapeCommands = JCheckBox.new("Escape commands")
+    @escapeCommands.setSelected (true)
+    @settings.add(@executeCommands, constraints)
+    constraints.gridy = 1
+    constraints.weighty = 1
+    @settings.add(@escapeCommands, constraints)
     @number_commands = 1
+  end 
+
+  def addPanel(tabs)
+    # Implement Subtabs
+    @command_records = {}
+    initOutputTab
+    initCommandsTab
+    initSettingsTab
     # Add a Label in panel
   end
 
@@ -309,7 +338,6 @@ class BurpExtender
   end
 
   def execCommand(com, invocation)
-    puts com
     command = com.dup
     request = invocation.getSelectedMessages[0].getRequest
     delim = '#'
@@ -319,31 +347,45 @@ class BurpExtender
     tags = tags.select.with_index { |word, idx| idx.even? }
     tags.each{|tag|
       tag = tag.to_s
-      puts tag 
       original = delim + tag + delim
       if tag == "URL"
       elsif tag == "Body"
+      elsif tag == "Req"
       else #tag is a header
         tag += ":"
         lines = request.to_s.lines
         chunk = lines.select { |line| line.downcase =~ /^(#{tag.downcase})/ }
         chunk = chunk[0].split(":")[1].strip
-        command.gsub!(original, chunk)
+        if @escapeCommands.isSelected
+          command.gsub!(original, Shellwords.escape(chunk))
+        else
+          command.gsub!(original, chunk)
+        end
       end
-
     }
-
+    
     #need to run the command in another thread so entire suite doesn't lock up on long cmds
-    thread = Thread.new {
-      IO.popen([command, :err=>[:child, :out]]) {|io| 
-        rdr = io.read
-        toAppend = "\n" + command + "\n"+ rdr.to_s + "\n" + $divder 
+      if @executeCommands.isSelected
+        thread = Thread.new {
+          IO.popen([command, :err=>[:child, :out]]) {|io| 
+            rdr = io.read
+            toAppend = "\n" + command + "\n"+ rdr.to_s + "\n" + $divder 
+            current = @current_output.getText.to_s + toAppend 
+            @current_output.setText(current)
+            if @output_file != nil and not @output_file.closed?
+              @output_file.puts(toAppend)
+            end
+          }
+        }
+      else
+        toAppend = "\n" + command + "\n" + $divder 
         current = @current_output.getText.to_s + toAppend 
         @current_output.setText(current)
-        @output_file.puts(toAppend)
-      }
+        if @output_file != nil and not @output_file.closed?
+          @output_file.puts(toAppend)
+        end
+      end
       #save output to a file since this isn't going to be read it should be safe in the thread
-    }
   end
 
   # ITab::getTabCaption
