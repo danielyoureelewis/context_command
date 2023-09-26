@@ -1,1 +1,1 @@
-{"nmap ssh":"nmap -p 22 #Host#","ping host":"ping -c 10 #Host#","curl 80":"curl http://#Host#"}
+{"nmap ssh":"nmap -p 22 #Host#","ping host":"ping -c 3 #Host#","curl url":"curl #URL#","echo host ua cookie":"echo #Host# #User-Agent# #Cookie#","echo req":"echo #Req#","echo body":"echo #Body#","echo URL":"echo #URL#"}

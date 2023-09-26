@@ -195,11 +195,14 @@ class BurpExtender
     @executeCommands.setSelected(true)
     @escapeCommands = JCheckBox.new("Escape commands")
     @escapeCommands.setSelected (true)
+    @echoCommands = JCheckBox.new("Echo commands")
+    @echoCommands.setSelected (true)
     @settings.add(@executeCommands, constraints)
     constraints.gridy = 1
-    constraints.weighty = 1
     @settings.add(@escapeCommands, constraints)
-    @number_commands = 1
+    constraints.gridy = 2
+    constraints.weighty = 1
+    @settings.add(@echoCommands, constraints)
   end 
 
   def addPanel(tabs)
@@ -339,7 +342,9 @@ class BurpExtender
 
   def execCommand(com, invocation)
     command = com.dup
-    request = invocation.getSelectedMessages[0].getRequest
+    message = invocation.getSelectedMessages[0]
+    request = message.getRequest
+    url =  message.getUrl
     delim = '#'
     #pull the tag from between the delims get first elem of reuslting array and to string
     tags = command.split(delim, -1)[1...-1]
@@ -349,45 +354,69 @@ class BurpExtender
       tag = tag.to_s
       original = delim + tag + delim
       if tag == "URL"
+        chunk = url
       elsif tag == "Body"
+        #this could and probably should be implemented using getBodyOffset()
+        chunk = ''
+        isBody = false
+        lines = request.to_s.lines.each_with_index do | line, index |
+          if line =~ /\A\s*\z/
+            isBody = true
+          end
+          if isBody
+            chunk = chunk + line
+          end 
+        end                                           
       elsif tag == "Req"
+        chunk = request.to_s
       else #tag is a header
         tag += ":"
         lines = request.to_s.lines
         chunk = lines.select { |line| line.downcase =~ /^(#{tag.downcase})/ }
         chunk = chunk[0].split(":")[1].strip
-        if @escapeCommands.isSelected
-          command.gsub!(original, Shellwords.escape(chunk))
-        else
-          command.gsub!(original, chunk)
-        end
+      end
+      if @escapeCommands.isSelected
+        command.gsub!(original, Shellwords.escape(chunk))
+      else
+        command.gsub!(original, chunk)
       end
     }
     
     #need to run the command in another thread so entire suite doesn't lock up on long cmds
-      if @executeCommands.isSelected
+    if @executeCommands.isSelected
         thread = Thread.new {
           IO.popen([command, :err=>[:child, :out]]) {|io| 
             rdr = io.read
-            toAppend = "\n" + command + "\n"+ rdr.to_s + "\n" + $divder 
+            if @echoCommands.isSelected
+              toAppend = "\n" + command + "\n"+ rdr.to_s + "\n" + $divder
+            else
+              toAppend = "\n" + rdr.to_s + "\n" + $divder
+            end
             current = @current_output.getText.to_s + toAppend 
             @current_output.setText(current)
+            puts toAppend
             if @output_file != nil and not @output_file.closed?
               @output_file.puts(toAppend)
             end
           }
         }
-      else
-        toAppend = "\n" + command + "\n" + $divder 
+    #do not like this code duplication between execute and dry run
+    else
+        if @echoCommands.isSelected
+          toAppend = "\n" + command + "\n" + $divder 
+        else
+          toAppend = "\n" + rdr.to_s + "\n" + $divder
+        end
         current = @current_output.getText.to_s + toAppend 
         @current_output.setText(current)
+        puts toAppend
         if @output_file != nil and not @output_file.closed?
           @output_file.puts(toAppend)
         end
       end
       #save output to a file since this isn't going to be read it should be safe in the thread
   end
-
+  
   # ITab::getTabCaption
   #
   # Set the tab caption
