@@ -123,19 +123,21 @@ class BurpExtender
     layout       = java.awt.GridBagLayout.new
     @commandsButtonsContainer = JPanel.new(layout)
     @commandsButtonsContainer.setBackground(Color.black)
+    @commandScrollPane = JScrollPane.new(@commandsButtonsContainer)
+    @commandScrollPane.setVerticalScrollBarPolicy(JScrollPane::VERTICAL_SCROLLBAR_ALWAYS)
+    @commandScrollPane.setHorizontalScrollBarPolicy(JScrollPane::HORIZONTAL_SCROLLBAR_NEVER)
     layout       = java.awt.BorderLayout.new
     @commands.setLayout(layout)
     @tabs.addTab("Commands", @commands)
-    @commandScrollPane = JScrollPane.new(@commandsButtonsContainer);
-    @commandScrollPane.setVerticalScrollBarPolicy(JScrollPane::VERTICAL_SCROLLBAR_ALWAYS);
-    #@commandScrollPane.setHorizontalScrollBarPolicy(JScrollPane::HORIZONTAL_SCROLLBAR_NEVER);
+    
+
     @commands.add(@commandScrollPane,'Center')
 
     layout       = java.awt.GridLayout.new(0,2)
     @addsave = JPanel.new(layout)
 
     @add_button = JButton.new("Add");
-    @add_button.addActionListener { addCommand('','') }
+    @add_button.addActionListener { addCommand('','', false) }
 
     @save_button = JButton.new("Save");
     @save_button.addActionListener { save }    
@@ -168,16 +170,16 @@ class BurpExtender
       cnt = 0
 
       config_json.each do |key, value|
-        addCommand(key, value)
+        addCommand(key, value, false)
         cnt = cnt + 1        
       end
       rest = default - cnt
       for x in 1..rest do
-        addCommand('','')
+        addCommand('','', false)
       end
     else
       for x in 1..default do
-        addCommand('','')
+        addCommand('','', false)
       end
     end
 
@@ -251,7 +253,7 @@ class BurpExtender
     for cmd in list
       children = cmd.getComponents
       if children[0].getText.to_s != '' and children[1].getText.to_s != ''
-        @command_records[children[0].getText.to_s] = children[1].getText.to_s
+        @command_records[children[0].getText.to_s] = {'cmd': children[1].getText.to_s, 'interactive': false}
       end
     end
   end
@@ -263,7 +265,7 @@ class BurpExtender
     File.write(config, JSON.dump(@command_records))
   end
 
-  def addCommand(label, exe)
+  def addCommand(label, exe, type)
     layout = java.awt.BorderLayout.new
     layout.setHgap(5)
     layout.setVgap(5)
@@ -286,13 +288,20 @@ class BurpExtender
     command.opaque     = true
     line.add(name,'West')
     line.add(command, 'Center')
-    #remove command button
 
+
+    #remove command button
     rmbutton = JButton.new("Remove");
     rmbutton.putClientProperty( "index", @number_of_commands);
     rmbutton.addActionListener { rmcommand(rmbutton, line, @number_of_commands)  }
-    line.add(rmbutton, 'East')
+    rmbutton.setBackground(Color.red);
+    line.add(rmbutton, 'South')
     
+    #interactive command button
+    interbutton = JButton.new("Interactive");
+    interbutton.putClientProperty( "index", @number_of_commands);
+    interbutton.addActionListener { setinteractive(interbutton, line, @number_of_commands)  }
+    line.add(interbutton, 'East')
     #@command_input.push(line)
 
     constraints  = java.awt.GridBagConstraints.new
@@ -303,15 +312,24 @@ class BurpExtender
     constraints.gridx = 0
     #constraints.gridy = @command_input.length()
     constraints.gridy = @number_of_commands 
-    constraints.insets     = java.awt.Insets.new(5,5,5,5)
+    constraints.insets     = java.awt.Insets.new(15,5,5,5)
     #@command_input[-1].setPreferredSize(java.awt.Dimension.new(1,1))
-    line.setPreferredSize(java.awt.Dimension.new(1,1))
+    #line.setPreferredSize(java.awt.Dimension.new(1,1))
+    line.setMinimumSize(java.awt.Dimension.new(15, 1));
     #@commandsButtonsContainer.add(@command_input[-1], constraints)
     @commandsButtonsContainer.add(line, constraints)
     @commandsButtonsContainer.revalidate
     @commandsButtonsContainer.repaint
     @number_of_commands = @number_of_commands + 1
     updateCommands
+  end
+
+  def setinteractive(interbutton, line, index)
+    if interbutton.getBackground == Color.green 
+      interbutton.setBackground(Color.white);
+    else 
+      interbutton.setBackground(Color.green); 
+    end 
   end
 
   def rmcommand(button, line, index)
@@ -321,7 +339,7 @@ class BurpExtender
     @commandsButtonsContainer.repaint
     save
   end
-  
+
   def createMenuItems(invocation)
     updateCommands
     # Array of menus datastore
@@ -348,7 +366,8 @@ class BurpExtender
   end
 
   def execCommand(com, invocation)
-    command = com.dup
+    command = com[:cmd].dup
+    interactive = com[:interactive]
     message = invocation.getSelectedMessages[0]
     request = message.getRequest
     url =  message.getUrl
