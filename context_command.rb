@@ -47,7 +47,7 @@ class BurpExtender
   attr_reader :callbacks
   $num_tabs = 0
   $divder = '---------------------------------------------------------------------------------'
-
+  $shell_var_prefix = 'BURP_'
 
   def registerExtenderCallbacks(callbacks)
     
@@ -170,7 +170,8 @@ class BurpExtender
       cnt = 0
 
       config_json.each do |key, value|
-        addCommand(key, value, false)
+        puts value["interactive"]
+        addCommand(key, value["cmd"], value["interactive"])
         cnt = cnt + 1        
       end
       rest = default - cnt
@@ -206,12 +207,29 @@ class BurpExtender
     @escapeCommands.setSelected (true)
     @echoCommands = JCheckBox.new("Echo commands")
     @echoCommands.setSelected (true)
-    @settings.add(@executeCommands, constraints)
+
+    @shell4interactive = javax.swing.JTextArea.new(0,0)    
+    @shell4interactive.setLineWrap(true);
+    @shell4interactive.setWrapStyleWord(true)
+    @shell4interactive.setText("xterm")
+    #name.setPlaceholder("menu name");
+    @shell4interactive.editable   = true
+    @shell4interactive.opaque     = true
+    @settings.add(@shell4interactive)
     constraints.gridy = 1
-    @settings.add(@escapeCommands, constraints)
+    constraints.weighty = 0
+    constraints.weightx = 0
+    constraints.gridx = 0
+    @settings.add(@executeCommands, constraints)
     constraints.gridy = 2
+    constraints.weighty = 0
+    @settings.add(@escapeCommands, constraints)
+    constraints.gridy = 3
     constraints.weighty = 1
     @settings.add(@echoCommands, constraints)
+    constraints.gridy = 4
+    constraints.weighty = 1
+   
   end 
 
   def addPanel(tabs)
@@ -253,9 +271,15 @@ class BurpExtender
     for cmd in list
       children = cmd.getComponents
       if children[0].getText.to_s != '' and children[1].getText.to_s != ''
-        @command_records[children[0].getText.to_s] = {'cmd': children[1].getText.to_s, 'interactive': false}
+        puts children[3].getBackground.to_s
+        if children[3].getBackground == Color.green 
+          @command_records[children[0].getText.to_s] = {'cmd': children[1].getText.to_s, 'interactive': true}
+        else 
+          @command_records[children[0].getText.to_s] = {'cmd': children[1].getText.to_s, 'interactive': false}
+        end 
       end
     end
+    puts @command_records.to_s
   end
 
   def save()   
@@ -289,21 +313,21 @@ class BurpExtender
     line.add(name,'West')
     line.add(command, 'Center')
 
-
     #remove command button
     rmbutton = JButton.new("Remove");
     rmbutton.putClientProperty( "index", @number_of_commands);
     rmbutton.addActionListener { rmcommand(rmbutton, line, @number_of_commands)  }
-    rmbutton.setBackground(Color.red);
+    rmbutton.setBackground(Color.lightGray);
     line.add(rmbutton, 'South')
     
-    #interactive command button
+    #interact/ive command button
     interbutton = JButton.new("Interactive");
     interbutton.putClientProperty( "index", @number_of_commands);
-    interbutton.addActionListener { setinteractive(interbutton, line, @number_of_commands)  }
+    interbutton.addActionListener { setinteractive(interbutton) }
     line.add(interbutton, 'East')
     #@command_input.push(line)
 
+    @default_color = interbutton.getBackground 
     constraints  = java.awt.GridBagConstraints.new
     constraints.anchor     = java.awt.GridBagConstraints::FIRST_LINE_START
     constraints.fill       = java.awt.GridBagConstraints::BOTH
@@ -324,12 +348,19 @@ class BurpExtender
     updateCommands
   end
 
-  def setinteractive(interbutton, line, index)
+  def setinteractive(interbutton)
+    updateCommands
+    index = interbutton.getClientProperty("index")
+    list = @commandsButtonsContainer.getComponents
+    children = list[index].getComponents
     if interbutton.getBackground == Color.green 
-      interbutton.setBackground(Color.white);
+      @command_records[children[0].getText.to_s][:interactive] = false;
+      interbutton.setBackground(@default_color);
     else 
+      @command_records[children[0].getText.to_s][:interactive] = true; 
       interbutton.setBackground(Color.green); 
     end 
+    puts @command_records.to_s
   end
 
   def rmcommand(button, line, index)
@@ -366,6 +397,8 @@ class BurpExtender
   end
 
   def execCommand(com, invocation)
+    updateCommands
+    puts com.to_s
     command = com[:cmd].dup
     interactive = com[:interactive]
     message = invocation.getSelectedMessages[0]
@@ -410,22 +443,55 @@ class BurpExtender
     
     #need to run the command in another thread so entire suite doesn't lock up on long cmds
     if @executeCommands.isSelected
-        thread = Thread.new {
-          IO.popen([command, :err=>[:child, :out]]) {|io| 
-            rdr = io.read
-            if @echoCommands.isSelected
-              toAppend = "\n" + command + "\n"+ rdr.to_s + "\n" + $divder
-            else
-              toAppend = "\n" + rdr.to_s + "\n" + $divder
+        puts interactive
+        if interactive
+          body = ''
+          term = 'konsole'
+          term_exec_flag = '-e'
+          bash_str_begin = '"/bin/bash -c \''
+          bash_str_end = '\';bash" &'
+          exec_str = ''
+          #begin building the string
+          #add url var
+          exec_str = exec_str + "export " + $shell_var_prefix + 'URL="' + url.to_s + '";'
+          #add body var
+          isBody = false
+          lines = request.to_s.lines.each_with_index do | line, index |
+            if line =~ /\A\s*\z/
+              isBody = true
             end
-            current = @current_output.getText.to_s + toAppend 
-            @current_output.setText(current)
-            puts toAppend
-            if @output_file != nil and not @output_file.closed?
-              @output_file.puts(toAppend)
-            end
+            if isBody
+              body = body + line.to_s
+            elsif line.include? ":" 
+              name = line.split(":")[0].strip
+              value = line.split(":")[1].strip
+              #exec_str = exec_str + "export " + $shell_var_prefix + name.to_s.gsub('-','_') + "=" + value.to_s.dump + ";"
+            end 
+          end                                           
+          exec_str = exec_str + "export " + $shell_var_prefix + 'body="' + body.to_s.strip + '";'
+          #add req var
+          exec_str = exec_str + "export " + $shell_var_prefix + 'req="' + Shellwords.escape(request.to_s.dump) + '";'
+          puts exec_str
+          exec_str = exec_str + command
+          system('konsole -e "/bin/bash -c \'' + exec_str + '\';bash" &') 
+        else
+          thread = Thread.new {
+            IO.popen([command, :err=>[:child, :out]]) {|io| 
+              rdr = io.read
+              if @echoCommands.isSelected
+                toAppend = "\n" + command + "\n"+ rdr.to_s + "\n" + $divder
+              else
+                toAppend = "\n" + rdr.to_s + "\n" + $divder
+              end
+              current = @current_output.getText.to_s + toAppend 
+              @current_output.setText(current)
+              puts toAppend
+              if @output_file != nil and not @output_file.closed?
+                @output_file.puts(toAppend)
+              end
+            }
           }
-        }
+        end
     #do not like this code duplication between execute and dry run
     else
         if @echoCommands.isSelected
